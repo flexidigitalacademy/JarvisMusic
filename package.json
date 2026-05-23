@@ -1,0 +1,19 @@
+{
+  "name": "jarvis-music-server",
+  "version": "1.0.0",
+  "description": "Dedicated audio streaming server for JarvisAI",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@distube/ytdl-core": "^4.15.8",
+    "express": "^4.21.2",
+    "yt-search": "^2.3.1"
+  },
+  "author": "JarvisAI",
+  "license": "ISC"
+}
