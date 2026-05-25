@@ -1,54 +1,50 @@
 const express = require('express');
-const ytdl = require('@distube/ytdl-core');
-const ytSearch = require('yt-search');
+const axios = require('axios');
+const crypto = require('crypto');
+const yts = require('yt-search');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Simple Security: Replace 'my-secret-key' with a strong password in your .env
-const API_KEY = process.env.API_KEY || 'my-secret-key';
-
-app.post('/fetch-audio', async (req, res) => {
-    // 1. Security Check
-    const clientKey = req.headers['x-jarvis-key'];
-    if (clientKey !== API_KEY) {
-        return res.status(403).send('Unauthorized');
+// --- SaveTube Logic (The "Proxy") ---
+const savetube = {
+    api: { base: "https://media.savetube.me/api", cdn: "/random-cdn", info: "/v2/info", download: "/download" },
+    headers: { 'user-agent': 'Postify/1.0.0', 'content-type': 'application/json' },
+    crypto: {
+        hexToBuffer: (h) => Buffer.from(h.match(/.{1,2}/g).join(''), 'hex'),
+        decrypt: async (enc) => {
+            const data = Buffer.from(enc, 'base64');
+            const key = savetube.crypto.hexToBuffer('C5D58EF67A7584E4A29F6C35BBC4EB12');
+            const decipher = crypto.createDecipheriv('aes-128-cbc', key, data.slice(0, 16));
+            let decrypted = Buffer.concat([decipher.update(data.slice(16)), decipher.final()]);
+            return JSON.parse(decrypted.toString());
+        }
+    },
+    download: async (url) => {
+        const id = url.split('v=')[1] || url.split('/').pop();
+        const cdn = (await axios.get(savetube.api.base + savetube.api.cdn)).data.cdn;
+        const info = await axios.post(`https://${cdn}${savetube.api.info}`, { url: `https://www.youtube.com/watch?v=${id}` }, { headers: savetube.headers });
+        const decrypted = await savetube.crypto.decrypt(info.data.data);
+        const dl = await axios.post(`https://${cdn}${savetube.api.download}`, { id, downloadType: 'audio', quality: '128', key: decrypted.key }, { headers: savetube.headers });
+        return dl.data.data.downloadUrl;
     }
+};
 
-    const { query } = req.body;
-    if (!query) return res.status(400).send('Query required');
-
+// --- API Route ---
+app.get('/play', async (req, res) => {
     try {
-        // 2. Search
-        const search = await ytSearch(query);
-        if (!search.videos.length) return res.status(404).send('Not found');
-
-        const video = search.videos[0];
-
-        // 3. Stream from YouTube directly
-        // This pipes the audio directly to the response, avoiding server disk storage
-        const stream = ytdl(video.url, { 
-            filter: 'audioonly', 
-            quality: 'highestaudio' 
-        });
-
-        // 4. Set headers for audio file
+        const query = req.query.q;
+        const { videos } = await yts(query);
+        const url = await savetube.download(videos[0].url);
+        
+        // Stream directly to the bot
+        const response = await axios({ url, method: 'GET', responseType: 'stream' });
         res.header('Content-Type', 'audio/mpeg');
-        res.header('Content-Disposition', `attachment; filename="${video.title}.mp3"`);
-
-        // 5. Pipe stream to the requester
-        stream.pipe(res);
-
-        stream.on('error', (err) => {
-            console.error(err);
-            if (!res.headersSent) res.status(500).send('Streaming error');
-        });
-
+        response.data.pipe(res);
     } catch (err) {
-        console.error(err);
-        res.status(500).send('Server error');
+        res.status(500).send("Error fetching audio");
     }
 });
 
-app.listen(PORT, () => console.log(`Music Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Music Server live on port ${PORT}`));
